@@ -3,7 +3,7 @@
 Scan any website for AI search engine readiness. Get a score, checklist, and recommendations.
 
 ```bash
-npx llm-optimization https://yoursite.com
+npx github:visualizevalue/llm-optimization https://yoursite.com
 ```
 
 ```
