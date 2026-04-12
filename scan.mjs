@@ -97,7 +97,7 @@ const homeLinks = new Set()
 let match
 while ((match = linkRegex.exec(homepage)) !== null) {
   const path = match[1].replace(/\/$/, '')
-  if (path && path !== '/' && !path.includes('.') && !path.startsWith('/api') && !path.startsWith('/admin') && !path.startsWith('/vv-admin')) {
+  if (path && path !== '/' && !path.includes('.') && !path.startsWith('/api') && !path.startsWith('/admin') && !path.startsWith('/vv-admin') && !path.startsWith('/icon') && !path.startsWith('/apple-icon')) {
     homeLinks.add(path)
   }
 }
