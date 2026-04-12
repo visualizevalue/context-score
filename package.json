@@ -1,0 +1,15 @@
+{
+  "name": "llm-optimization",
+  "version": "1.0.0",
+  "description": "Scan any website for AI search engine readiness. Score, checklist, and recommendations.",
+  "bin": {
+    "llm-optimization": "scan.mjs"
+  },
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/visualizevalue/llm-optimization"
+  },
+  "keywords": ["llm", "seo", "ai", "optimization", "chatgpt", "claude", "perplexity", "search", "schema", "structured-data"]
+}
