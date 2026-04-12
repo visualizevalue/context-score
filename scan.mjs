@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * LLM Optimization Scanner
+ * LLM Optimization Scanner v3
  * 
- * Scans a website and scores its readiness for AI search engines.
- * Detects site type and tailors recommendations.
+ * Deep-crawls a website and scores its readiness for AI search engines.
  * Usage: npx github:visualizevalue/llm-optimization https://yoursite.com
  */
 
 const url = process.argv[2]
+const verbose = process.argv.includes('--verbose') || process.argv.includes('-v')
 
 if (!url) {
   console.log('')
   console.log('  LLM Optimization Scanner')
   console.log('  Usage: npx github:visualizevalue/llm-optimization https://yoursite.com')
+  console.log('  Flags: --verbose (-v) for detailed page-by-page results')
   console.log('')
   process.exit(1)
 }
@@ -21,7 +22,6 @@ if (!url) {
 const base = url.replace(/\/$/, '')
 const results = { pass: [], fail: [], warn: [] }
 let score = 0
-const maxScore = 100
 
 function pass(label, points = 5) { results.pass.push(label); score += points }
 function fail(label) { results.fail.push(label) }
@@ -29,314 +29,327 @@ function warn(label) { results.warn.push(label) }
 
 async function fetchText(path) {
   try {
-    const res = await fetch(base + path, { redirect: 'follow', headers: { 'User-Agent': 'LLM-Optimization-Scanner/1.0' } })
+    const res = await fetch(base + path, { redirect: 'follow', headers: { 'User-Agent': 'LLM-Optimization-Scanner/3.0' } })
     if (!res.ok) return null
     return await res.text()
   } catch { return null }
 }
 
-async function fetchHead(path) {
+async function fetchStatus(path) {
   try {
-    const res = await fetch(base + path, { method: 'HEAD', redirect: 'follow', headers: { 'User-Agent': 'LLM-Optimization-Scanner/1.0' } })
-    return { status: res.status }
-  } catch { return null }
+    const res = await fetch(base + path, { method: 'HEAD', redirect: 'follow', headers: { 'User-Agent': 'LLM-Optimization-Scanner/3.0' } })
+    return res.status
+  } catch { return 0 }
 }
 
 console.log('')
 console.log(`  Scanning ${base}...`)
-console.log('')
 
-// Fetch homepage first for detection
-const homepage = await fetchText('/')
+// ═══════════════════════════════════════
+// PHASE 1: Fetch core files
+// ═══════════════════════════════════════
+
+const [homepage, llmsTxt, llmsFull, robots, sitemap, aiPlugin] = await Promise.all([
+  fetchText('/'),
+  fetchText('/llms.txt'),
+  fetchText('/llms-full.txt'),
+  fetchText('/robots.txt'),
+  fetchText('/sitemap.xml'),
+  fetchText('/.well-known/ai-plugin.json'),
+])
+
 if (!homepage) {
   console.log('  Could not fetch homepage. Check the URL and try again.')
   process.exit(1)
 }
 
-// Detect site type
-let siteType = 'general'
+// ═══════════════════════════════════════
+// PHASE 2: Detect site type
+// ═══════════════════════════════════════
+
 const hpLower = homepage.toLowerCase()
+const signals = { ecommerce: 0, content: 0, saas: 0, portfolio: 0 }
 
-const signals = {
-  ecommerce: 0,
-  content: 0,
-  saas: 0,
-  portfolio: 0,
-}
-
-// E-commerce signals
-if (/add.to.cart|buy.now|shop.now|price|cart|checkout|\$\d/i.test(hpLower)) signals.ecommerce += 3
-if (/product/i.test(hpLower)) signals.ecommerce += 1
-if (/shopify|woocommerce|bigcommerce/i.test(hpLower)) signals.ecommerce += 2
-
-// Content signals
-if (/article|blog|lesson|course|learn|tutorial|guide/i.test(hpLower)) signals.content += 3
-if (/subscribe|newsletter|email/i.test(hpLower)) signals.content += 1
-if (/chapter|module|curriculum/i.test(hpLower)) signals.content += 2
-
-// SaaS signals
-if (/sign.up|free.trial|get.started|dashboard|api|developer|integrate/i.test(hpLower)) signals.saas += 4
+if (/add.to.cart|buy.now|shop.now|cart|checkout/i.test(hpLower)) signals.ecommerce += 4
+if (/shopify|woocommerce|bigcommerce/i.test(hpLower)) signals.ecommerce += 3
+if (/article|blog|lesson|course|learn|tutorial/i.test(hpLower)) signals.content += 3
+if (/subscribe|newsletter/i.test(hpLower)) signals.content += 1
+if (/module|curriculum|student/i.test(hpLower)) signals.content += 3
+if (/sign.up|free.trial|get.started|dashboard|api|developer/i.test(hpLower)) signals.saas += 4
 if (/integration|feature|plan/i.test(hpLower)) signals.saas += 1
+if (/portfolio|case.study|client/i.test(hpLower)) signals.portfolio += 3
 
-// Portfolio signals
-if (/portfolio|work|projects|case.study|client/i.test(hpLower)) signals.portfolio += 2
+const siteType = Object.entries(signals).sort((a, b) => b[1] - a[1])[0]
+const type = siteType[1] >= 3 ? siteType[0] : 'general'
+const typeLabels = { ecommerce: 'E-commerce', content: 'Content / Education', saas: 'SaaS / Tool', portfolio: 'Portfolio / Agency', general: 'General' }
 
-const topType = Object.entries(signals).sort((a, b) => b[1] - a[1])[0]
-if (topType[1] >= 3) siteType = topType[0]
+console.log(`  Site type: ${typeLabels[type]}`)
 
-const typeLabels = {
-  ecommerce: 'E-commerce',
-  content: 'Content / Education',
-  saas: 'SaaS / Tool',
-  portfolio: 'Portfolio / Agency',
-  general: 'General',
+// ═══════════════════════════════════════
+// PHASE 3: Discover pages to crawl
+// ═══════════════════════════════════════
+
+console.log('  Discovering pages...')
+
+// Extract internal links from homepage
+const linkRegex = /href=["'](\/[^"'#]*?)["']/g
+const homeLinks = new Set()
+let match
+while ((match = linkRegex.exec(homepage)) !== null) {
+  const path = match[1].replace(/\/$/, '')
+  if (path && path !== '/' && !path.includes('.') && !path.startsWith('/api') && !path.startsWith('/admin') && !path.startsWith('/vv-admin')) {
+    homeLinks.add(path)
+  }
 }
 
-console.log(`  Site type: ${typeLabels[siteType]}`)
+// Also try known high-value paths
+const knownPaths = ['/about', '/blog', '/faq', '/pricing', '/glossary', '/answers', '/concepts', '/docs', '/changelog', '/reviews', '/learn', '/courses']
+for (const p of knownPaths) homeLinks.add(p)
+
+// Get sitemap URLs too
+const sitemapPaths = new Set()
+if (sitemap) {
+  const locRegex = /<loc>([^<]+)<\/loc>/g
+  let m
+  while ((m = locRegex.exec(sitemap)) !== null) {
+    try {
+      const u = new URL(m[1])
+      if (u.origin === new URL(base).origin) sitemapPaths.add(u.pathname.replace(/\/$/, '') || '/')
+    } catch {}
+  }
+}
+
+// Pick up to 20 pages to deep-crawl (prioritize variety)
+const pagesToCrawl = ['/']
+const seen = new Set(['/'])
+
+// Add known paths first
+for (const p of homeLinks) {
+  if (!seen.has(p) && pagesToCrawl.length < 20) { pagesToCrawl.push(p); seen.add(p) }
+}
+
+// Fill with sitemap URLs (sample from different sections)
+const sitemapArr = [...sitemapPaths].filter(p => !seen.has(p))
+const step = Math.max(1, Math.floor(sitemapArr.length / 10))
+for (let i = 0; i < sitemapArr.length && pagesToCrawl.length < 20; i += step) {
+  if (!seen.has(sitemapArr[i])) { pagesToCrawl.push(sitemapArr[i]); seen.add(sitemapArr[i]) }
+}
+
+console.log(`  Crawling ${pagesToCrawl.length} pages...`)
 console.log('')
 
-// === UNIVERSAL CHECKS ===
+// ═══════════════════════════════════════
+// PHASE 4: Deep crawl
+// ═══════════════════════════════════════
 
-// 1. llms.txt
-const llmsTxt = await fetchText('/llms.txt')
-if (llmsTxt && llmsTxt.length > 100) {
-  pass('llms.txt exists (' + llmsTxt.length + ' chars)', 10)
-} else {
-  fail('No llms.txt — AI crawlers have no context about your site')
+const pageResults = []
+const schemaTypes = new Set()
+let pagesWithSchema = 0
+let pagesWithSpeakable = 0
+let pagesWithBreadcrumbs = 0
+let pagesWithFaq = 0
+let pagesWithMeta = 0
+let totalPages = 0
+
+// Crawl in batches of 5
+for (let i = 0; i < pagesToCrawl.length; i += 5) {
+  const batch = pagesToCrawl.slice(i, i + 5)
+  const htmls = await Promise.all(batch.map(p => fetchText(p)))
+  
+  htmls.forEach((html, j) => {
+    if (!html) return
+    totalPages++
+    const path = batch[j]
+    const pageInfo = { path, schemas: [], hasSpeakable: false, hasBreadcrumbs: false, hasFaq: false, hasMeta: false }
+    
+    // Extract schema types
+    const jsonLdBlocks = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || []
+    jsonLdBlocks.forEach(block => {
+      const content = block.replace(/<\/?script[^>]*>/gi, '')
+      try {
+        const data = JSON.parse(content)
+        const extractTypes = (obj) => {
+          if (!obj) return
+          if (obj['@type']) {
+            const types = Array.isArray(obj['@type']) ? obj['@type'] : [obj['@type']]
+            types.forEach(t => { schemaTypes.add(t); pageInfo.schemas.push(t) })
+          }
+          if (obj['@graph']) obj['@graph'].forEach(extractTypes)
+          if (obj.mainEntity) {
+            const entities = Array.isArray(obj.mainEntity) ? obj.mainEntity : [obj.mainEntity]
+            entities.forEach(extractTypes)
+          }
+        }
+        extractTypes(data)
+        
+        if (/speakable/i.test(content)) { pageInfo.hasSpeakable = true; pagesWithSpeakable++ }
+        if (/BreadcrumbList/i.test(content)) { pageInfo.hasBreadcrumbs = true; pagesWithBreadcrumbs++ }
+        if (/FAQPage/i.test(content)) { pageInfo.hasFaq = true; pagesWithFaq++ }
+      } catch {}
+    })
+    
+    if (jsonLdBlocks.length > 0) pagesWithSchema++
+    
+    // Check meta description
+    if (/<meta[^>]*name=["']description["'][^>]*content=["'][^"']{50,}["']/i.test(html)) {
+      pageInfo.hasMeta = true
+      pagesWithMeta++
+    }
+    
+    pageResults.push(pageInfo)
+  })
 }
 
-// 2. llms-full.txt
-const llmsFull = await fetchText('/llms-full.txt')
-if (llmsFull && llmsFull.length > 500) {
-  pass('llms-full.txt exists (' + llmsFull.length + ' chars)', 5)
-} else {
-  warn('No llms-full.txt — add a detailed version with content excerpts')
-}
+// ═══════════════════════════════════════
+// PHASE 5: Score
+// ═══════════════════════════════════════
 
-// 3. robots.txt
-const robots = await fetchText('/robots.txt')
+// Core files (30 points)
+if (llmsTxt && llmsTxt.length > 100) pass('llms.txt (' + llmsTxt.length + ' chars)', 8)
+else fail('No llms.txt — AI crawlers have no context about your site')
+
+if (llmsFull && llmsFull.length > 500) pass('llms-full.txt (' + llmsFull.length + ' chars)', 4)
+else warn('No llms-full.txt')
+
 if (robots) {
-  const hasAICrawlers = /gptbot|claudebot|perplexitybot/i.test(robots)
-  const blocksTraining = /user-agent:\s*ccbot[\s\S]*?disallow:\s*\//im.test(robots)
-  
-  if (hasAICrawlers) pass('robots.txt addresses AI crawlers', 5)
-  else warn('robots.txt doesn\'t mention AI crawlers (GPTBot, ClaudeBot, PerplexityBot)')
-  
-  if (blocksTraining) pass('Blocks training crawlers', 5)
-  else warn('Consider blocking training crawlers (CCBot, Bytespider)')
-} else {
-  fail('No robots.txt')
-}
+  if (/gptbot|claudebot|perplexitybot/i.test(robots)) pass('robots.txt addresses AI crawlers', 4)
+  else warn('robots.txt doesn\'t mention AI crawlers')
+  if (/user-agent:\s*ccbot[\s\S]*?disallow:\s*\//im.test(robots)) pass('Blocks training crawlers', 4)
+  else warn('Not blocking training crawlers (CCBot, Bytespider)')
+} else fail('No robots.txt')
 
-// 4. Sitemap
-const sitemap = await fetchText('/sitemap.xml')
 if (sitemap) {
-  const urlCount = (sitemap.match(/<loc>/g) || []).length
-  if (urlCount > 50) pass('Sitemap: ' + urlCount + ' URLs', 5)
-  else if (urlCount > 0) { pass('Sitemap: ' + urlCount + ' URLs', 3); warn('Sitemap has few URLs — ensure all pages are included') }
-} else {
-  fail('No sitemap.xml')
-}
+  const urlCount = sitemapPaths.size
+  pass('Sitemap: ' + urlCount + ' URLs', urlCount > 100 ? 6 : urlCount > 20 ? 4 : 2)
+} else fail('No sitemap.xml')
 
-// 5. Homepage schema
-const hasOrg = /Organization/i.test(homepage) && /application\/ld\+json/i.test(homepage)
-const hasWebsite = /WebSite/i.test(homepage)
-const hasSearchAction = /SearchAction/i.test(homepage)
-const hasFaq = /FAQPage/i.test(homepage)
-const hasSpeakable = /[Ss]peakable/i.test(homepage)
-const hasPerson = /"Person"/i.test(homepage)
-const hasSameAs = /sameAs/i.test(homepage)
+if (aiPlugin) {
+  try { JSON.parse(aiPlugin); pass('ai-plugin.json', 4) } catch { warn('ai-plugin.json is invalid JSON') }
+} else warn('No ai-plugin.json')
 
-if (hasOrg) pass('Organization schema', 5)
-else fail('No Organization schema on homepage')
+// Schema coverage (30 points)
+const schemaCoverage = totalPages > 0 ? Math.round((pagesWithSchema / totalPages) * 100) : 0
+if (schemaCoverage >= 80) pass('Schema on ' + schemaCoverage + '% of pages (' + pagesWithSchema + '/' + totalPages + ')', 10)
+else if (schemaCoverage >= 50) { pass('Schema on ' + schemaCoverage + '% of pages', 6); warn('Schema coverage could be higher (' + pagesWithSchema + '/' + totalPages + ')') }
+else if (schemaCoverage > 0) { pass('Some schema (' + schemaCoverage + '%)', 3); warn('Most pages lack schema markup') }
+else fail('No schema markup found on any page')
 
-if (hasWebsite) pass('WebSite schema', 3)
-else warn('No WebSite schema')
+if (schemaTypes.size >= 8) pass(schemaTypes.size + ' schema types used', 5)
+else if (schemaTypes.size >= 4) pass(schemaTypes.size + ' schema types', 3)
+else if (schemaTypes.size > 0) warn('Only ' + schemaTypes.size + ' schema type(s) — diversify')
+else fail('No schema types detected')
 
-if (hasSearchAction) pass('SearchAction for sitelinks', 5)
-else warn('No SearchAction — add for search box in results')
-
-if (hasFaq) pass('FAQPage schema', 5)
-else fail('No FAQ schema on homepage')
-
-if (hasSpeakable) pass('Speakable specification', 5)
+const speakablePct = totalPages > 0 ? Math.round((pagesWithSpeakable / totalPages) * 100) : 0
+if (speakablePct >= 50) pass('Speakable on ' + speakablePct + '% of pages', 5)
+else if (pagesWithSpeakable > 0) { pass('Speakable on ' + pagesWithSpeakable + ' pages', 2); warn('Add speakable to more pages (' + speakablePct + '% coverage)') }
 else fail('No speakable — AI doesn\'t know which content to cite')
 
-if (hasSameAs) pass('sameAs social links', 3)
-else warn('No sameAs — link social profiles for entity recognition')
+const breadcrumbPct = totalPages > 0 ? Math.round((pagesWithBreadcrumbs / totalPages) * 100) : 0
+if (breadcrumbPct >= 50) pass('Breadcrumbs on ' + breadcrumbPct + '% of pages', 5)
+else if (pagesWithBreadcrumbs > 0) pass('Breadcrumbs on ' + pagesWithBreadcrumbs + ' pages', 2)
+else warn('No breadcrumbs')
 
-// Meta description
-const metaDesc = homepage.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i)
-if (metaDesc && metaDesc[1].length > 120) pass('Meta description: ' + metaDesc[1].length + ' chars', 3)
-else if (metaDesc) warn('Meta description is short (' + (metaDesc[1]?.length || 0) + ' chars) — aim for 150+')
-else fail('No meta description')
+if (pagesWithFaq >= 3) pass('FAQ schema on ' + pagesWithFaq + ' pages', 5)
+else if (pagesWithFaq > 0) pass('FAQ schema on ' + pagesWithFaq + ' page(s)', 2)
+else warn('No FAQ schema')
 
-// 6. ai-plugin.json
-const aiPlugin = await fetchText('/.well-known/ai-plugin.json')
-if (aiPlugin) {
-  try { JSON.parse(aiPlugin); pass('ai-plugin.json', 5) } catch { warn('ai-plugin.json is invalid JSON') }
-} else {
-  warn('No ai-plugin.json')
+// Meta descriptions (10 points)
+const metaPct = totalPages > 0 ? Math.round((pagesWithMeta / totalPages) * 100) : 0
+if (metaPct >= 80) pass('Meta descriptions on ' + metaPct + '% of pages', 5)
+else if (metaPct >= 50) { pass('Meta descriptions on ' + metaPct + '%', 3); warn('Some pages missing meta descriptions') }
+else if (pagesWithMeta > 0) warn('Only ' + metaPct + '% of pages have detailed meta descriptions')
+else fail('No meta descriptions found')
+
+// Homepage signals (15 points)
+if (/Organization/i.test(homepage) && /application\/ld\+json/i.test(homepage)) pass('Organization schema', 3)
+else fail('No Organization schema on homepage')
+
+if (/SearchAction/i.test(homepage)) pass('SearchAction', 3)
+else warn('No SearchAction for sitelinks')
+
+if (/sameAs/i.test(homepage)) pass('sameAs social links', 2)
+else warn('No sameAs in schema')
+
+if (/"Person"/i.test(homepage)) pass('Person/author entity', 3)
+else warn('No Person schema — add founder/author for authority')
+
+// Content structure (15 points)
+const keyPages = [
+  { path: '/about', label: 'About', points: 2 },
+  { path: '/blog', label: 'Blog', points: 2 },
+  { path: '/glossary', label: 'Glossary', points: 2 },
+  { path: '/answers', label: 'Answers', points: 3 },
+  { path: '/concepts', label: 'Concepts', points: 3 },
+  { path: '/faq', label: 'FAQ', points: 2 },
+  { path: '/changelog', label: 'Changelog', points: 1 },
+]
+
+for (const page of keyPages) {
+  const status = await fetchStatus(page.path)
+  if (status === 200) pass(page.label + ' page', page.points)
 }
 
-// === TYPE-SPECIFIC CHECKS ===
+// ═══════════════════════════════════════
+// PHASE 6: Output
+// ═══════════════════════════════════════
 
-if (siteType === 'content') {
-  // Content-specific checks
-  const aboutHead = await fetchHead('/about')
-  if (aboutHead && aboutHead.status === 200) pass('About page', 2)
-  else warn('No /about page — important for author authority')
-  
-  if (hasPerson) pass('Person/author schema', 5)
-  else fail('No Person schema — add for author entity recognition')
-  
-  const blogHead = await fetchHead('/blog')
-  const blogAlt = await fetchHead('/articles')
-  if ((blogHead && blogHead.status === 200) || (blogAlt && blogAlt.status === 200)) pass('Blog exists', 2)
-  else warn('No blog — regular content signals freshness and authority')
-  
-  const glossaryHead = await fetchHead('/glossary')
-  if (glossaryHead && glossaryHead.status === 200) pass('Glossary exists', 3)
-  else warn('No /glossary — individual term pages are highly citable by LLMs')
-  
-  const answersHead = await fetchHead('/answers')
-  if (answersHead && answersHead.status === 200) pass('Answer pages exist', 3)
-  else warn('No /answers — create pages that directly answer questions people ask AI')
-  
-  const conceptsHead = await fetchHead('/concepts')
-  if (conceptsHead && conceptsHead.status === 200) pass('Concept pages exist', 3)
-  else warn('No /concepts — deep reference pages for your core ideas')
-  
-  // Check for BreadcrumbList
-  if (/BreadcrumbList/i.test(homepage)) pass('Breadcrumbs', 2)
+const maxScore = 100
+const grade = score >= 85 ? 'A' : score >= 70 ? 'B' : score >= 50 ? 'C' : score >= 30 ? 'D' : 'F'
 
-} else if (siteType === 'ecommerce') {
-  // E-commerce checks
-  const hasProduct = /Product/i.test(homepage) && /application\/ld\+json/i.test(homepage)
-  if (hasProduct) pass('Product schema', 5)
-  else fail('No Product schema — essential for e-commerce visibility')
-  
-  const hasRating = /AggregateRating|ratingValue/i.test(homepage)
-  if (hasRating) pass('AggregateRating on products', 5)
-  else warn('No ratings schema — add AggregateRating to products with reviews')
-  
-  const hasOffer = /Offer|price/i.test(homepage) && /application\/ld\+json/i.test(homepage)
-  if (hasOffer) pass('Offer/pricing schema', 3)
-  else warn('No Offer schema — structured pricing helps AI cite your products')
-  
-  const faqHead = await fetchHead('/faq')
-  if (faqHead && faqHead.status === 200) pass('FAQ page', 3)
-  else warn('No /faq — create FAQ pages for product and shipping questions')
-  
-  if (/BreadcrumbList/i.test(homepage)) pass('Breadcrumbs', 3)
-  else warn('No breadcrumbs — important for e-commerce navigation schema')
-
-} else if (siteType === 'saas') {
-  // SaaS checks
-  const pricingHead = await fetchHead('/pricing')
-  if (pricingHead && pricingHead.status === 200) pass('Pricing page', 3)
-  else warn('No /pricing — comparison queries need structured pricing data')
-  
-  const docsHead = await fetchHead('/docs')
-  const docAlt = await fetchHead('/documentation')
-  if ((docsHead && docsHead.status === 200) || (docAlt && docAlt.status === 200)) pass('Documentation exists', 3)
-  else warn('No /docs — documentation is highly citable by AI for technical queries')
-  
-  const changelogHead = await fetchHead('/changelog')
-  if (changelogHead && changelogHead.status === 200) pass('Changelog', 2)
-  else warn('No /changelog — signals active development')
-  
-  if (hasPerson) pass('Founder/team schema', 3)
-  else warn('No Person schema — add founder entity for authority')
-  
-  const hasSoftware = /SoftwareApplication/i.test(homepage)
-  if (hasSoftware) pass('SoftwareApplication schema', 5)
-  else warn('No SoftwareApplication schema — helps AI understand your product')
-
-} else if (siteType === 'portfolio') {
-  // Portfolio checks
-  if (hasPerson) pass('Person schema', 5)
-  else fail('No Person schema — essential for portfolio/agency authority')
-  
-  const workHead = await fetchHead('/work')
-  const projectsHead = await fetchHead('/projects')
-  if ((workHead && workHead.status === 200) || (projectsHead && projectsHead.status === 200)) pass('Work/projects page', 3)
-  
-  const hasCreativeWork = /CreativeWork|VisualArtwork/i.test(homepage)
-  if (hasCreativeWork) pass('CreativeWork schema', 3)
-  else warn('No CreativeWork schema — structured data for your work')
-
-} else {
-  // General fallback checks
-  const aboutHead = await fetchHead('/about')
-  if (aboutHead && aboutHead.status === 200) pass('About page', 2)
-  
-  const blogHead = await fetchHead('/blog')
-  if (blogHead && blogHead.status === 200) pass('Blog', 2)
-  
-  if (hasPerson) pass('Person schema', 3)
-  else warn('No Person schema — add for authority signals')
-}
-
-// === OUTPUT ===
-
-console.log(`  Score: ${score}/${maxScore}`)
+console.log('  ══════════════════════════════════════')
+console.log(`  Score: ${Math.min(score, maxScore)}/${maxScore}  |  Grade: ${grade}  |  ${typeLabels[type]}`)
+console.log('  ══════════════════════════════════════')
+console.log('')
+console.log(`  Crawled ${totalPages} pages  |  ${sitemapPaths.size} in sitemap  |  ${homeLinks.size} links on homepage`)
 console.log('')
 
+// Schema summary
+if (schemaTypes.size > 0) {
+  console.log('  Schema types: ' + [...schemaTypes].join(', '))
+  console.log('')
+}
+
 if (results.pass.length) {
-  console.log('  \x1b[32m✓ PASS\x1b[0m')
+  console.log('  \x1b[32m✓ PASS (' + results.pass.length + ')\x1b[0m')
   results.pass.forEach(r => console.log('    ' + r))
   console.log('')
 }
 
 if (results.warn.length) {
-  console.log('  \x1b[33m⚠ IMPROVE\x1b[0m')
+  console.log('  \x1b[33m⚠ IMPROVE (' + results.warn.length + ')\x1b[0m')
   results.warn.forEach(r => console.log('    ' + r))
   console.log('')
 }
 
 if (results.fail.length) {
-  console.log('  \x1b[31m✗ MISSING\x1b[0m')
+  console.log('  \x1b[31m✗ MISSING (' + results.fail.length + ')\x1b[0m')
   results.fail.forEach(r => console.log('    ' + r))
   console.log('')
 }
 
-const grade = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : score >= 20 ? 'D' : 'F'
-console.log(`  Grade: ${grade}`)
-console.log('')
-
-// Type-specific next steps
-if (score < 100) {
-  console.log(`  Recommendations for ${typeLabels[siteType]} sites:`)
-  
-  if (siteType === 'content') {
-    if (!llmsTxt) console.log('    → Create /llms.txt with your content structure')
-    if (!hasFaq) console.log('    → Add FAQPage schema to homepage and key pages')
-    if (!hasSpeakable) console.log('    → Add speakable to articles and landing pages')
-    if (!hasPerson) console.log('    → Add Person schema for your author/founder')
-    console.log('    → Build /answers pages that directly answer questions people ask AI')
-    console.log('    → Build /concepts pages for your core ideas')
-    console.log('    → Build /glossary with individual term pages')
-  } else if (siteType === 'ecommerce') {
-    if (!llmsTxt) console.log('    → Create /llms.txt describing your products and categories')
-    console.log('    → Add Product + Offer + AggregateRating schema to product pages')
-    console.log('    → Build /faq with common product and shipping questions')
-    console.log('    → Add BreadcrumbList for category navigation')
-    console.log('    → Write detailed product descriptions that AI can cite')
-  } else if (siteType === 'saas') {
-    if (!llmsTxt) console.log('    → Create /llms.txt describing your product and API')
-    console.log('    → Add SoftwareApplication schema to homepage')
-    console.log('    → Build comparison pages (you vs. alternatives)')
-    console.log('    → Publish documentation that AI can reference')
-    console.log('    → Add FAQPage schema to pricing and feature pages')
-  } else if (siteType === 'portfolio') {
-    if (!llmsTxt) console.log('    → Create /llms.txt with your services and notable work')
-    console.log('    → Add Person schema with knowsAbout, sameAs, hasOccupation')
-    console.log('    → Add CreativeWork/VisualArtwork schema to project pages')
-    console.log('    → Build case study pages with structured outcomes')
-  }
-  
-  console.log('')
-  console.log('  Full playbook: https://github.com/visualizevalue/llm-optimization')
+// Verbose: page-by-page
+if (verbose) {
+  console.log('  Page details:')
+  pageResults.forEach(p => {
+    const flags = [
+      p.schemas.length ? p.schemas.join(', ') : 'no schema',
+      p.hasSpeakable ? 'speakable' : '',
+      p.hasBreadcrumbs ? 'breadcrumbs' : '',
+      p.hasFaq ? 'FAQ' : '',
+      p.hasMeta ? 'meta' : '',
+    ].filter(Boolean).join(' | ')
+    console.log('    ' + p.path + '  →  ' + flags)
+  })
   console.log('')
 }
+
+// Recommendations
+console.log('  Next steps:')
+if (!llmsTxt) console.log('    1. Create /llms.txt — tell AI crawlers what your site is about')
+if (schemaCoverage < 80) console.log('    ' + (!llmsTxt ? '2' : '1') + '. Add schema to more pages (' + schemaCoverage + '% → 80%+)')
+if (pagesWithSpeakable === 0) console.log('    → Add speakable to articles and key pages')
+if (pagesWithFaq < 3) console.log('    → Add FAQPage schema to pages with Q&A content')
+if (metaPct < 80) console.log('    → Write detailed meta descriptions for all pages')
+console.log('')
+console.log('  Playbook: https://github.com/visualizevalue/llm-optimization')
+console.log('')
