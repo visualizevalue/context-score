@@ -1,66 +1,73 @@
-# LLM Optimization
+# Context Score
 
-Scan any website for AI search engine readiness. Get a score, checklist, and recommendations.
+How well does your site explain itself?
+
+A site that connects its own context well is understood by everyone — humans, search engines, AI, and any system that needs to know what you do.
 
 ```bash
-npx github:visualizevalue/llm-optimization https://yoursite.com
+npx github:visualizevalue/context-score https://yoursite.com
 ```
 
 ```
-  Score: 65/100
+  Context Score: 83/100  |  Grade: B  |  content
 
-  ✓ PASS
-    llms.txt exists (8294 chars)
-    Blocks training crawlers (CCBot)
-    Organization schema on homepage
-    SearchAction for sitelinks search
-    ai-plugin.json exists
+  Identity          18/20  ██████████████████░░
+  Structure         16/20  ████████████████░░░░
+  Depth             19/20  ███████████████████░
+  Connectivity      14/20  ██████████████░░░░░░
+  Discoverability   16/20  ████████████████░░░░
 
-  ⚠ IMPROVE
-    No FAQ schema
-    No speakable specification
+  20 pages crawled  |  372 in sitemap  |  14 avg links/page  |  680 avg words
 
-  ✗ MISSING
-    No glossary
-    No meta description
-
-  Grade: B
+  Top opportunities:
+    → 3 orphan pages with no internal links pointing to them
+    → Limited cross-linking between sections — connect blog ↔ concepts ↔ glossary
+    → Speakable on 8/20 pages — AI doesn't know what to quote
+    → 5 schema types — diversify to 8+
 ```
 
-## What it checks
+## What it measures
 
-- **llms.txt** — does your site have a context file for AI crawlers?
-- **llms-full.txt** — detailed version with content excerpts?
-- **robots.txt** — are training crawlers blocked? Citation crawlers allowed?
-- **Sitemap** — how many URLs are indexed?
-- **Schema markup** — Organization, WebSite, Person, FAQPage, SearchAction, Speakable
-- **Meta descriptions** — detailed enough for AI to cite?
-- **ai-plugin.json** — AI tool discovery manifest?
-- **Key pages** — about, FAQ, glossary, blog
+| Category | Points | What it looks for |
+|---|---|---|
+| **Identity** | 20 | Does the site explain what it is? Organization schema, about page, meta descriptions, llms.txt, author entity |
+| **Structure** | 20 | Is content findable? Sitemap, breadcrumbs, navigation depth, robots.txt |
+| **Depth** | 20 | Is there substance? Answer pages, concepts, glossary, FAQ schema, blog, word count |
+| **Connectivity** | 20 | Do pages reference each other? Internal link density, cross-linking, orphan pages, related content |
+| **Discoverability** | 20 | Can external systems understand it? Schema diversity, speakable, SearchAction, social links, ai-plugin.json |
 
-## The playbook
+Use `--verbose` for page-by-page details, orphan page lists, and cross-section connection maps.
 
-After scanning, follow these steps to improve your score:
+---
 
-### 1. Create llms.txt
+## The Context Playbook
 
-A human-readable file at `/llms.txt` that tells AI crawlers what your site is about.
+10 steps to build a site that explains itself.
+
+### 1. Declare who you are
+
+Create a `/llms.txt` file that tells any system — AI or otherwise — what your site is, what it offers, and where to find it.
 
 ```
 # Your Brand
 
-> One-line description.
+> One-line description of what you do.
 
-## Courses
-- [Course Name](https://yoursite.com/course): What it covers.
+## What we offer
+- [Product](https://yoursite.com/product): What it does.
+- [Course](https://yoursite.com/course): What it teaches.
 
-## Tools
-- [Tool Name](https://yoursite.com/tool): What it does.
+## Key pages
+- [About](https://yoursite.com/about)
+- [Blog](https://yoursite.com/blog)
+- [FAQ](https://yoursite.com/faq)
 ```
 
-### 2. Configure robots.txt
+Add Organization schema and a clear `/about` page. If there's a founder or author behind the work, add Person schema.
 
-Block training crawlers. Allow citation crawlers.
+### 2. Map your territory
+
+A sitemap tells systems what exists. Breadcrumbs tell them where it lives. robots.txt tells them who's allowed in.
 
 ```
 User-agent: CCBot
@@ -76,44 +83,40 @@ User-agent: PerplexityBot
 Allow: /
 ```
 
-### 3. Build answer pages
+Block training crawlers. Allow citation crawlers. Map everything in `sitemap.xml`.
 
-Create pages that directly answer questions people ask AI.
+### 3. Answer questions directly
 
-- URL: `/answers/how-to-start-a-business`
+Create pages that answer questions people type into AI.
+
+- URL: `/answers/how-to-price-a-digital-product`
 - H1: The exact question
-- First paragraph: Direct answer (this gets cited)
-- Body: Depth and examples
+- First paragraph: The direct answer (this is what gets cited)
+- Body: Depth, examples, evidence
 - Schema: FAQPage + Article + SpeakableSpecification
 
-### 4. Build concept pages
+### 4. Define your terms
 
-For every core idea your brand teaches, create a dedicated page with:
+Every core idea deserves its own page. Not one glossary page — individual URLs with individual schemas.
 
-- Definition (one quotable sentence)
-- Essay (500+ words)
-- Related content links
-- DefinedTerm + FAQPage schema
+- `/glossary/leverage` — definition, context, examples
+- `/concepts/build-once-sell-twice` — essay, related content, DefinedTerm schema
 
-### 5. Build a glossary
+Each page is a citation surface. Each URL is an entry point.
 
-Individual pages for each term. Not one long page — individual URLs with individual schemas. Each is a citation opportunity.
+### 5. Cross-link everything
 
-### 6. Add schema to everything
+Every page should reference related content in other sections. Articles link to concepts. Concepts link to courses. Courses link to workflows. The site is a web, not a list of pages.
 
-| Page type | Schema |
-|---|---|
-| Homepage | Organization, WebSite, SearchAction |
-| About | Person, Organization, FAQPage |
-| Article | BlogPosting, SpeakableSpecification |
-| How-to | HowTo with HowToSteps |
-| Product | Product, AggregateRating |
-| Concept | DefinedTerm, FAQPage, Article |
-| Answer | FAQPage, Article, SpeakableSpecification |
+Check:
+- Do blog posts link to related concepts?
+- Do concept pages link to relevant courses?
+- Do glossary terms link to the content that uses them?
+- Are there orphan pages with no internal links pointing to them?
 
-### 7. Add speakable
+### 6. Make content quotable
 
-Tells AI which content to quote:
+Add speakable markup to tell AI which content to cite:
 
 ```json
 {
@@ -124,55 +127,67 @@ Tells AI which content to quote:
 }
 ```
 
-### 8. Create ai-plugin.json
+Write first paragraphs that stand alone as answers. Clear, specific, quotable.
 
-At `/.well-known/ai-plugin.json`:
-
-```json
-{
-  "schema_version": "v1",
-  "name_for_model": "your_brand",
-  "description_for_model": "What your site offers...",
-  "llms_txt": "https://yoursite.com/llms.txt"
-}
-```
-
-### 9. Write meta descriptions as answers
-
-Not taglines. Answers.
-
-Bad: "We help businesses grow."
-Good: "5 courses on leverage and value creation. 168 lessons. Start free. $9/month. 607 five-star reviews."
-
-### 10. Cross-link everything
-
-Every page links to related content in other sections. Articles link to concepts. Concepts link to courses. Courses link to workflows. The site is a web, not a list.
-
-### 11. Build audience pages
+### 7. Build for every audience
 
 `/for/designers`, `/for/developers`, `/for/writers` — audience-specific pages with tailored problems and recommendations.
 
-### 12. Build comparison pages
+Comparison pages work too: "X vs. Y" with structured tables. These answer decision-making queries directly.
 
-"Your product vs. Alternative" with structured tables. These answer purchase-decision queries directly.
+### 8. Let machines read you
+
+Add schema markup to every page type:
+
+| Page type | Schema |
+|---|---|
+| Homepage | Organization, WebSite, SearchAction |
+| About | Person, Organization |
+| Article | BlogPosting, SpeakableSpecification |
+| How-to | HowTo with steps |
+| Product | Product, AggregateRating |
+| Concept | DefinedTerm, FAQPage, Article |
+| Answer | FAQPage, Article, SpeakableSpecification |
+
+Diverse schema types help machines categorize your content correctly.
+
+### 9. Prove your work
+
+Reviews, case studies, a changelog. Evidence that the work is real and ongoing.
+
+- `/changelog` — show what you've built and when
+- `/reviews` — real feedback from real people
+- Schema: Review, AggregateRating
+
+### 10. Stay findable
+
+- `robots.txt` that addresses AI crawlers by name
+- Meta descriptions that answer questions (not taglines)
+- `sameAs` links connecting your schema to social profiles
+- `ai-plugin.json` for AI tool discovery
+
+**Bad meta:** "We help businesses grow."
+**Good meta:** "5 courses on leverage and value creation. 168 lessons. Free to start. 607 five-star reviews."
+
+---
 
 ## Case study
 
-Built while optimizing [visualizevalue.com](https://visualizevalue.com) — 372 pages, from zero AI optimization to Grade B in one session.
+Built while building [visualizevalue.com](https://visualizevalue.com) — every recommendation maps to something we actually shipped.
 
-- [llms.txt](https://visualizevalue.com/llms.txt)
-- [Answers](https://visualizevalue.com/answers) — 20 answer pages
+- [llms.txt](https://visualizevalue.com/llms.txt) — context file for AI crawlers
+- [Answers](https://visualizevalue.com/answers) — 20 direct-answer pages
 - [Concepts](https://visualizevalue.com/concepts) — 11 deep dives
-- [Glossary](https://visualizevalue.com/glossary) — 25 individual pages
+- [Glossary](https://visualizevalue.com/glossary) — 25 individual term pages
 - [Workflows](https://visualizevalue.com/workflows) — 15 build logs
-- [The $99 MBA](https://visualizevalue.com/mba)
+- [For pages](https://visualizevalue.com/for) — audience-specific entry points
+- [Changelog](https://visualizevalue.com/changelog) — 90-day activity grid
 
 ## About
 
 Built by [Jack Butcher](https://visualizevalue.com/about/jack-butcher) and [Claude Code](https://claude.ai/claude-code).
 
 - [Visualize Value](https://visualizevalue.com)
-- [Courses](https://visualizevalue.com/learn)
 - [@jackbutcher](https://x.com/jackbutcher)
 
 ## License
